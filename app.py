@@ -11,10 +11,12 @@ from spacy.lang.en.stop_words import STOP_WORDS
 
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-import en_core_web_lg
+import en_core_web_sm
 app = Flask(__name__)
 app.secret_key = 'my_secret_key_1234'
-nlp = en_core_web_lg.load()
+id_ = ''
+
+nlp = en_core_web_sm.load(exclude=["tagger", "parser", "senter", "attribute_ruler", "lemmatizer", "ner"])
 nlp.add_pipe('sentencizer')
 
 @app.route('/', methods=['GET', 'POST'])
@@ -24,13 +26,21 @@ def index():
         language = request.form['language']
         transcript = get_transcript(video_url)
         summarized_transcript, error = summarize_transcript2(transcript, language)
-        
-        #flash(summarized_transcript)
+
         if error:
             flash(error)
             return redirect('/')
         return render_template('index.html', summary_array=summarized_transcript)
     return render_template('index.html')
+
+def file_exists(file):
+    try:
+        with open(file, 'r') as f:
+            return True
+    except IOError:
+        return False
+    except:
+        raise
 
 def get_transcript(video_url):
     _id = video_url.split("=")[1].split("&")[0]
@@ -95,20 +105,21 @@ def summarize_transcript2(transcript, language):
         # Combine the sentences in the segment into a single string
         segment_text = ' '.join(segment)
         
-        # Summarize the segment using GPT-3
-        # response = openai.Completion.create(
-        #     engine="text-davinci-002",
-        #     prompt=f"Summarize the following text using GPT-3:\n\n{segment_text}\n\n",
-        #     max_tokens=1024,
-        #     n=1,
-        #     stop=None,
-        #     temperature=0.5,
-        # )
-        # summary = response.choices[0].text.strip()
+        #Summarize the segment using GPT-3
+        response = openai.Completion.create(
+            engine="text-davinci-002",
+            prompt=f"Write a concise summary of the following using GPT-3:\n\n{segment_text}\n\n CONCISE SUMMARY:",
+            max_tokens=2000,
+            n=1,
+            stop=None,
+            temperature=0.5,
+        )
+        summary = response.choices[0].text.strip()
         summary = summarize_text_turbo(segment_text)
         
         # Create a dictionary object for the interval
         obj = {'start_time': "{:.2f}".format(start_time/60), 'end_time': "{:.2f}".format(end_time/60), 'text': summary[0].replace('\n', "<br />")}
+        #obj = {'start_time': "{:.2f}".format(start_time/60), 'end_time': "{:.2f}".format(end_time/60), 'text': summary.replace('\n', "<br />")}
         text_by_interval.append(obj)
         
         # Update the start time of the next interval
@@ -149,9 +160,13 @@ def summarize_transcript(transcript, language):
 def summarize_text(text, language):
     try:
         headers = {'Authorization': f'Bearer {API_KEY}'}
-        prompt = """Act as professional copywriter, write a summarize version of the following text, in the next paragraph add in form of bullet points the highlight of it most important element with a short description in few words.
-        write the text in Portuguese
-        The text is : <<SUMMARY>>"""
+        prompt = """Write a concise summary of the following using GPT-3:
+
+
+        <<SUMMARY>>
+
+
+        CONCISE SUMMARY:"""
 
         prompt = prompt.replace('<<SUMMARY>>', text)
         #prompt = prompt.encode(encoding='ASCII', errors='ignore').decode()
@@ -159,7 +174,7 @@ def summarize_text(text, language):
         # Summarize the text in English
         data = {
             'prompt': prompt,
-            'model': "text-davinci-003",
+            'model': "text-davinci-002",
             'max_tokens': 2000,
             'temperature': 0.5,
             'top_p': 1,
@@ -175,7 +190,8 @@ def summarize_text(text, language):
         trace = traceback.format_exc()
         error_message = f"An error occurred: {str(e)} <br />trace: {trace } <br />{response.json()}"
         return None, error_message
-    
+
+
 def summarize_text_turbo(text, model="gpt-3.5-turbo", temp=0,  language="English"):
     try:
         prompt = """Write a summarize version of the following [text]
