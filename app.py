@@ -8,13 +8,13 @@ import requests
 import textwrap
 import spacy
 from spacy.lang.en.stop_words import STOP_WORDS
-
+import os
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import en_core_web_sm
 app = Flask(__name__)
 app.secret_key = 'my_secret_key_1234'
-id_ = ''
+
 
 nlp = en_core_web_sm.load(exclude=["tagger", "parser", "senter", "attribute_ruler", "lemmatizer", "ner"])
 nlp.add_pipe('sentencizer')
@@ -24,8 +24,8 @@ def index():
     if request.method == 'POST':
         video_url = request.form['video_url']
         language = request.form['language']
-        transcript = get_transcript(video_url)
-        summarized_transcript, error = summarize_transcript2(transcript, language)
+        transcript, video_id = get_transcript(video_url)
+        summarized_transcript, error = summarize_transcript(transcript, language, video_id)
 
         if error:
             flash(error)
@@ -44,8 +44,15 @@ def file_exists(file):
 
 def get_transcript(video_url):
     _id = video_url.split("=")[1].split("&")[0]
-    transcript = YouTubeTranscriptApi.get_transcript(_id)
-    return transcript
+    filename = f"files/transcript_{_id}.json"
+    if os.path.exists(filename):
+        with open(filename, "r") as f:
+            transcript = json.load(f)
+    else:
+        transcript = YouTubeTranscriptApi.get_transcript(_id)
+        with open(filename, "w") as f:
+            json.dump(transcript, f)
+    return transcript, _id
 
 API_KEY = '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'
 
@@ -74,37 +81,49 @@ def create_similarity_matrix(sentences):
             similarity_matrix[i][j] = cosine_similarity(doc.vector.reshape(1,-1), doc2.vector.reshape(1,-1))[0][0]
     return similarity_matrix
 
-def summarize_transcript2(transcript, language):
-    
+def summarize_transcript(transcript, language, video_id):
+    # Check if the file for the given id_param exists
+    filename = f"files/segments_{video_id}.json"
     # Compute the duration of each 5 minute interval
     interval_duration = 5 * 60  # 5 minutes in seconds
     num_intervals = math.ceil(transcript[-1]['start'] / interval_duration)  # Round up to the nearest interval
     interval_durations = [interval_duration] * num_intervals
 
     interval_durations[-1] = transcript[-1]['start'] % interval_duration
-    
+
     # Extract the text property from the transcript
     text = ' '.join([d['text'] for d in transcript])
-    
-    # Use TextRank to segment the text
-    doc = nlp(text)
-    sentences = [sent.text.strip() for sent in doc.sents]
-    similarity_matrix = create_similarity_matrix(sentences)
-    scores = pagerank(similarity_matrix)
-    ranked_sentences = [sentence for score, sentence in sorted(zip(scores, sentences), reverse=True)]
-    segment_size = int(len(ranked_sentences) / num_intervals) + 1
-    segments = [ranked_sentences[i:i+segment_size] for i in range(0, len(ranked_sentences), segment_size)]
-    
+    if os.path.exists(filename):
+        # Load the segments from the file
+        with open(filename, "r") as f:
+            segments = json.load(f)
+    else:
+        # Compute the segments and save them to the file
+        
+
+        # Use TextRank to segment the text
+        doc = nlp(text)
+        sentences = [sent.text.strip() for sent in doc.sents]
+        similarity_matrix = create_similarity_matrix(sentences)
+        scores = pagerank(similarity_matrix)
+        ranked_sentences = [sentence for score, sentence in sorted(zip(scores, sentences), reverse=True)]
+        segment_size = int(len(ranked_sentences) / num_intervals) + 1
+        segments = [ranked_sentences[i:i+segment_size] for i in range(0, len(ranked_sentences), segment_size)]
+
+        # Save the segments to the file
+        with open(filename, "w") as f:
+            json.dump(segments, f)
+
     # Summarize each segment using GPT-3
     text_by_interval = []
     start_time = 0
     for i, segment in enumerate(segments):
         # Compute the end time of the interval
         end_time = (i+1) * interval_duration
-        
+
         # Combine the sentences in the segment into a single string
         segment_text = ' '.join(segment)
-        
+
         #Summarize the segment using GPT-3
         response = openai.Completion.create(
             engine="text-davinci-002",
@@ -115,13 +134,13 @@ def summarize_transcript2(transcript, language):
             temperature=0.5,
         )
         summary = response.choices[0].text.strip()
-        summary = summarize_text_turbo(segment_text)
-        
+        #summary = summarize_text_turbo(segment_text)
+
         # Create a dictionary object for the interval
-        obj = {'start_time': "{:.2f}".format(start_time/60), 'end_time': "{:.2f}".format(end_time/60), 'text': summary[0].replace('\n', "<br />")}
-        #obj = {'start_time': "{:.2f}".format(start_time/60), 'end_time': "{:.2f}".format(end_time/60), 'text': summary.replace('\n', "<br />")}
+        #obj = {'start_time': "{:.2f}".format(start_time/60), 'end_time': "{:.2f}".format(end_time/60), 'text': summary[0].replace('\n', "<br />")}
+        obj = {'start_time': "{:.2f}".format(start_time/60), 'end_time': "{:.2f}".format(end_time/60), 'text': summary.replace('\n', "<br />")}
         text_by_interval.append(obj)
-        
+
         # Update the start time of the next interval
         start_time = end_time
 
@@ -133,7 +152,7 @@ def debug(text):
     with open('debug.txt', 'a') as f:
         f.write(str(text))
 
-def summarize_transcript(transcript, language):
+def summarize_transcript2(transcript, language):
     # Compute the duration of each 5 minute interval
     interval_duration = 5 * 60  # 5 minutes in seconds
     num_intervals = math.ceil(transcript[-1]['start'] / interval_duration)  # Round up to the nearest interval
