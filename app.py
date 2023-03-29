@@ -193,7 +193,6 @@ def summarize_text_turbo(text, model="gpt-3.5-turbo", temp=0,  language="English
         conversation.append({'role': 'user', 'content': prompt})
         response = openai.ChatCompletion.create(model=model, messages=conversation, temperature=temp)
         summary = response['choices'][0]['message']['content']
-        flash(summary)
         return summary, None
     except Exception as e:
         trace = traceback.format_exc()
