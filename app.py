@@ -6,9 +6,16 @@ from youtube_transcript_api import YouTubeTranscriptApi
 import json
 import requests
 import textwrap
+import spacy
+from spacy.lang.en.stop_words import STOP_WORDS
 
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+import en_core_web_lg
 app = Flask(__name__)
 app.secret_key = 'my_secret_key_1234'
+nlp = en_core_web_lg.load()
+nlp.add_pipe('sentencizer')
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -16,7 +23,7 @@ def index():
         video_url = request.form['video_url']
         language = request.form['language']
         transcript = get_transcript(video_url)
-        summarized_transcript, error = summarize_transcript(transcript, language)
+        summarized_transcript, error = summarize_transcript2(transcript, language)
         
         #flash(summarized_transcript)
         if error:
@@ -32,8 +39,89 @@ def get_transcript(video_url):
 
 API_KEY = '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'
 
-def summarize_transcript(transcript, language):
+def pagerank(M, d=0.85, eps=1.0e-8):
+    N = M.shape[0]
+    v = np.random.rand(N, 1)
+    v = v / np.linalg.norm(v, 1)
+    last_v = np.ones((N, 1), dtype=np.float32) * np.inf
+    M_hat = (d * M) + (((1 - d) / N) * np.ones((N, N)))
+    while np.linalg.norm(v - last_v, 2) > eps:
+        last_v = v
+        v = M_hat @ v
+    return v
 
+
+def create_similarity_matrix(sentences):
+    #nlp = spacy.load('en_core_web_md')
+    # Create a matrix of similarity scores between each sentence
+    similarity_matrix = np.zeros((len(sentences), len(sentences)))
+    for i, sentence in enumerate(sentences):
+        doc = nlp(sentence)
+        for j, other_sentence in enumerate(sentences):
+            if i == j:
+                continue
+            doc2 = nlp(other_sentence)
+            similarity_matrix[i][j] = cosine_similarity(doc.vector.reshape(1,-1), doc2.vector.reshape(1,-1))[0][0]
+    return similarity_matrix
+
+def summarize_transcript2(transcript, language):
+    
+    # Compute the duration of each 5 minute interval
+    interval_duration = 5 * 60  # 5 minutes in seconds
+    num_intervals = math.ceil(transcript[-1]['start'] / interval_duration)  # Round up to the nearest interval
+    interval_durations = [interval_duration] * num_intervals
+
+    interval_durations[-1] = transcript[-1]['start'] % interval_duration
+    
+    # Extract the text property from the transcript
+    text = ' '.join([d['text'] for d in transcript])
+    
+    # Use TextRank to segment the text
+    doc = nlp(text)
+    sentences = [sent.text.strip() for sent in doc.sents]
+    similarity_matrix = create_similarity_matrix(sentences)
+    scores = pagerank(similarity_matrix)
+    ranked_sentences = [sentence for score, sentence in sorted(zip(scores, sentences), reverse=True)]
+    segment_size = int(len(ranked_sentences) / num_intervals) + 1
+    segments = [ranked_sentences[i:i+segment_size] for i in range(0, len(ranked_sentences), segment_size)]
+    
+    # Summarize each segment using GPT-3
+    text_by_interval = []
+    start_time = 0
+    for i, segment in enumerate(segments):
+        # Compute the end time of the interval
+        end_time = (i+1) * interval_duration
+        
+        # Combine the sentences in the segment into a single string
+        segment_text = ' '.join(segment)
+        
+        # Summarize the segment using GPT-3
+        response = openai.Completion.create(
+            engine="text-davinci-002",
+            prompt=f"Summarize the following text using GPT-3:\n\n{segment_text}\n\n",
+            max_tokens=1024,
+            n=1,
+            stop=None,
+            temperature=0.5,
+        )
+        summary = response.choices[0].text.strip()
+        
+        # Create a dictionary object for the interval
+        obj = {'start_time': "{:.2f}".format(start_time/60), 'end_time': "{:.2f}".format(end_time/60), 'text': summary.replace('\n', "<br />")}
+        text_by_interval.append(obj)
+        
+        # Update the start time of the next interval
+        start_time = end_time
+
+    return text_by_interval, None
+
+
+
+def debug(text):
+    with open('debug.txt', 'a') as f:
+        f.write(str(text))
+
+def summarize_transcript(transcript, language):
     # Compute the duration of each 5 minute interval
     interval_duration = 5 * 60  # 5 minutes in seconds
     num_intervals = math.ceil(transcript[-1]['start'] / interval_duration)  # Round up to the nearest interval
