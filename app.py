@@ -96,18 +96,19 @@ def summarize_transcript2(transcript, language):
         segment_text = ' '.join(segment)
         
         # Summarize the segment using GPT-3
-        response = openai.Completion.create(
-            engine="text-davinci-002",
-            prompt=f"Summarize the following text using GPT-3:\n\n{segment_text}\n\n",
-            max_tokens=1024,
-            n=1,
-            stop=None,
-            temperature=0.5,
-        )
-        summary = response.choices[0].text.strip()
+        # response = openai.Completion.create(
+        #     engine="text-davinci-002",
+        #     prompt=f"Summarize the following text using GPT-3:\n\n{segment_text}\n\n",
+        #     max_tokens=1024,
+        #     n=1,
+        #     stop=None,
+        #     temperature=0.5,
+        # )
+        # summary = response.choices[0].text.strip()
+        summary = summarize_text_turbo(segment_text)
         
         # Create a dictionary object for the interval
-        obj = {'start_time': "{:.2f}".format(start_time/60), 'end_time': "{:.2f}".format(end_time/60), 'text': summary.replace('\n', "<br />")}
+        obj = {'start_time': "{:.2f}".format(start_time/60), 'end_time': "{:.2f}".format(end_time/60), 'text': summary[0].replace('\n', "<br />")}
         text_by_interval.append(obj)
         
         # Update the start time of the next interval
