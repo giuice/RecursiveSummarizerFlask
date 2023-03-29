@@ -1,0 +1,21 @@
+
+GET https://api.openai.com/v1/models HTTP/1.1
+Content-Type: application/json
+Authorization: Bearer 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
+
+
+
+GET https://api.openai.com/v1/chat/completions HTTP/1.1
+Authorization: Bearer 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
+Content-Type: application/json
+
+{
+    "model": "gpt-3.5-turbo",
+    "messages": [
+        {
+            "role": "user",
+            "content": "Say this is a test!"
+        }
+    ],
+    "temperature": 0.7
+}
